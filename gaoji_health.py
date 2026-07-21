@@ -19,6 +19,10 @@
   UNION_ID: 微信unionId，默认 oWMs41LM9XuGX7eFzhIFIC02dzUc
 
 兼容青龙面板，支持多用户 (使用 & 分隔)
+
+注意：本脚本已根据抓包数据修复了查询接口，但签到和任务完成接口
+在提供的 HAR 中未捕获到实际请求。脚本内置了多组候选接口，如果
+均不可用，需要重新抓包获取实际接口地址。
 """
 
 import os
@@ -36,6 +40,7 @@ DEFAULT_CONFIG = {
     "userId": "6070827797166606",
     "platformUserId": "5282553618412798",
     "unionId": "oWMs41LM9XuGX7eFzhIFIC02dzUc",
+    "miniOpenId": "optxd5cJn5jH3iBGybYrpCfTV77o",
 }
 
 
@@ -122,29 +127,45 @@ class GaoJiClient:
             return None
 
     def do_sign(self, task_id=372):
-        sign_paths = [
-            "/fund/api/appCoupon/doSign",
-            "/fund/api/noauth/appCoupon/doSign",
-            "/fund/api/appCoupon/userSign",
-            "/fund/api/noauth/appCoupon/userSignIn",
+        """执行签到 - 尝试多组候选接口"""
+        # 候选签到接口列表（基于常见微信小程序签到模式）
+        sign_candidates = [
+            # fund 模块
+            {"path": "/fund/api/appCoupon/doSign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/fund/api/noauth/appCoupon/doSign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/fund/api/appCoupon/signIn", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/fund/api/noauth/appCoupon/signIn", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/fund/api/appCoupon/userSign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/fund/api/noauth/appCoupon/userSign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/fund/api/appCoupon/sign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/fund/api/noauth/appCoupon/sign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/fund/api/dkSign/doSign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/fund/api/sign/doSign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            # gulosity 模块
+            {"path": "/gulosity/api/dkUserEvent/createDkUserEvent", "body": {"userId": self.config["userId"], "bizType": "dailySignIn", "status": 1, "businessId": int(self.config["businessId"]), "storeId": int(self.config["storeId"])}},
+            {"path": "/gulosity/api/dkUserEvent/addUserEvent", "body": {"userId": self.config["userId"], "bizType": "dailySignIn", "status": 1, "businessId": int(self.config["businessId"]), "storeId": int(self.config["storeId"])}},
+            {"path": "/gulosity/api/dkUserEvent/saveOrUpdate", "body": {"userId": self.config["userId"], "bizType": "dailySignIn", "status": 1, "businessId": int(self.config["businessId"]), "storeId": int(self.config["storeId"])}},
+            # gaea 模块
+            {"path": "/gaea/api/appCoupon/doSign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
+            {"path": "/gaea/api/noauth/appCoupon/doSign", "body": {"taskId": task_id, "businessId": int(self.config["businessId"]), "userId": self.config["userId"], "storeId": int(self.config["storeId"])}},
         ]
-        for path in sign_paths:
-            payload = {
-                "taskId": task_id,
-                "businessId": int(self.config["businessId"]),
-                "userId": self.config["userId"],
-                "storeId": int(self.config["storeId"]),
-            }
+
+        for candidate in sign_candidates:
+            path = candidate["path"]
+            body = candidate["body"]
             log_info(f"尝试签到: {path}")
-            result = self._post(path, payload)
-            if result:
-                success = result.get("success") or result.get("code") == 200
-                if success:
-                    log_success(f"签到成功!")
-                    return True
+            result = self._post(path, body)
+            if result is not None:
+                # 检查成功标志
+                code = result.get("code")
+                success = result.get("success")
                 msg = result.get("message") or result.get("msg") or ""
-                log_info(f"返回: {msg}")
-        log_error("签到失败，请手动抓包确认签到接口")
+                if success or code == 200:
+                    log_success(f"签到成功! {msg}")
+                    return True
+                log_info(f"返回 [{code}]: {msg}")
+
+        log_error("所有候选签到接口均失败，请手动抓包确认签到接口")
         return False
 
     def get_user_achievement(self):
@@ -165,11 +186,14 @@ class GaoJiClient:
         return None
 
     def get_user_fund(self):
+        """获取用户高G金余额 - 修复字段名"""
         path = "/fund/api/fundAccounts/getCurrentFundV2"
         params = {"businessId": self.config["businessId"], "storeId": self.config["storeId"]}
         result = self._get(path, params)
         if result:
-            log_info(f"高G金余额: {result.get('currentFund', '未知')}")
+            # 注意：接口返回字段名为 fund，不是 currentFund
+            fund = result.get("fund", result.get("currentFund", "未知"))
+            log_info(f"高G金余额: {fund}")
             return result
         return None
 
@@ -178,7 +202,9 @@ class GaoJiClient:
         params = {"storeId": self.config["storeId"], "maskingFlag": "false"}
         result = self._get(path, params)
         if result:
-            log_info("用户信息加载成功")
+            name = result.get("name", "未知")
+            phone = result.get("phone", "")
+            log_info(f"用户信息: {name} ({phone})")
             return result
         return None
 
@@ -197,17 +223,19 @@ class GaoJiClient:
         return []
 
     def complete_browse_task(self, task):
+        """完成浏览任务 - 尝试多组候选接口"""
         task_id = task.get("taskId")
         task_name = task.get("name", "未知任务")
         biz_type = task.get("bizType", "browsePage")
         event_key = task.get("eventKey", "")
+        browse_page_id = task.get("browsePageId", "")
+        browse_page_url = task.get("browsePageUrl", "")
         log_info(f"开始完成任务: {task_name}")
-        event_paths = [
-            "/gulosity/api/dkUserEvent/createDkUserEvent",
-            "/gulosity/api/dkUserEvent/saveOrUpdate",
-        ]
-        for path in event_paths:
-            payload = {
+
+        # 候选任务完成接口
+        task_candidates = [
+            # gulosity 事件模块
+            {"path": "/gulosity/api/dkUserEvent/createDkUserEvent", "body": {
                 "userId": self.config["userId"],
                 "businessId": int(self.config["businessId"]),
                 "storeId": int(self.config["storeId"]),
@@ -216,14 +244,106 @@ class GaoJiClient:
                 "eventKey": event_key,
                 "status": 1,
                 "platformUserId": self.config["platformUserId"],
-            }
-            result = self._post(path, payload)
-            if result:
-                success = result.get("success") or result.get("code") == 200
-                if success:
+            }},
+            {"path": "/gulosity/api/dkUserEvent/addUserEvent", "body": {
+                "userId": self.config["userId"],
+                "businessId": int(self.config["businessId"]),
+                "storeId": int(self.config["storeId"]),
+                "taskId": task_id,
+                "bizType": biz_type,
+                "eventKey": event_key,
+                "status": 1,
+                "platformUserId": self.config["platformUserId"],
+            }},
+            {"path": "/gulosity/api/dkUserEvent/saveOrUpdate", "body": {
+                "userId": self.config["userId"],
+                "businessId": int(self.config["businessId"]),
+                "storeId": int(self.config["storeId"]),
+                "taskId": task_id,
+                "bizType": biz_type,
+                "eventKey": event_key,
+                "status": 1,
+                "platformUserId": self.config["platformUserId"],
+            }},
+            # fund 模块
+            {"path": "/fund/api/appCoupon/completeTask", "body": {
+                "userId": self.config["userId"],
+                "businessId": int(self.config["businessId"]),
+                "storeId": int(self.config["storeId"]),
+                "taskId": task_id,
+                "bizType": biz_type,
+                "pageId": browse_page_id,
+                "pageUrl": browse_page_url,
+            }},
+            {"path": "/fund/api/noauth/appCoupon/completeTask", "body": {
+                "userId": self.config["userId"],
+                "businessId": int(self.config["businessId"]),
+                "storeId": int(self.config["storeId"]),
+                "taskId": task_id,
+                "bizType": biz_type,
+                "pageId": browse_page_id,
+                "pageUrl": browse_page_url,
+            }},
+            {"path": "/fund/api/appCoupon/doTask", "body": {
+                "userId": self.config["userId"],
+                "businessId": int(self.config["businessId"]),
+                "storeId": int(self.config["storeId"]),
+                "taskId": task_id,
+                "bizType": biz_type,
+                "pageId": browse_page_id,
+                "pageUrl": browse_page_url,
+            }},
+            {"path": "/fund/api/noauth/appCoupon/doTask", "body": {
+                "userId": self.config["userId"],
+                "businessId": int(self.config["businessId"]),
+                "storeId": int(self.config["storeId"]),
+                "taskId": task_id,
+                "bizType": biz_type,
+                "pageId": browse_page_id,
+                "pageUrl": browse_page_url,
+            }},
+            {"path": "/fund/api/appCoupon/browsePage", "body": {
+                "userId": self.config["userId"],
+                "businessId": int(self.config["businessId"]),
+                "storeId": int(self.config["storeId"]),
+                "taskId": task_id,
+                "bizType": biz_type,
+                "pageId": browse_page_id,
+                "pageUrl": browse_page_url,
+            }},
+            {"path": "/fund/api/noauth/appCoupon/browsePage", "body": {
+                "userId": self.config["userId"],
+                "businessId": int(self.config["businessId"]),
+                "storeId": int(self.config["storeId"]),
+                "taskId": task_id,
+                "bizType": biz_type,
+                "pageId": browse_page_id,
+                "pageUrl": browse_page_url,
+            }},
+            # gaea 模块
+            {"path": "/gaea/api/appCoupon/completeTask", "body": {
+                "userId": self.config["userId"],
+                "businessId": int(self.config["businessId"]),
+                "storeId": int(self.config["storeId"]),
+                "taskId": task_id,
+                "bizType": biz_type,
+            }},
+        ]
+
+        for candidate in task_candidates:
+            path = candidate["path"]
+            body = candidate["body"]
+            result = self._post(path, body)
+            if result is not None:
+                code = result.get("code")
+                success = result.get("success")
+                msg = result.get("message") or result.get("msg") or ""
+                if success or code == 200:
                     log_success(f"任务 [{task_name}] 完成!")
                     return True
-        log_error(f"任务 [{task_name}] 完成失败")
+                log_info(f"  {path} 返回 [{code}]: {msg}")
+
+        log_error(f"任务 [{task_name}] 完成失败，请手动抓包确认接口")
         return False
 
     def complete_all_tasks(self):
@@ -233,8 +353,10 @@ class GaoJiClient:
         completed = 0
         for task in tasks:
             if task.get("status") == 1:
+                log_info(f"任务 [{task.get('name', '未知')}] 已完成，跳过")
                 continue
             if task.get("leftTimes", 0) <= 0:
+                log_info(f"任务 [{task.get('name', '未知')}] 无剩余次数，跳过")
                 continue
             if self.complete_browse_task(task):
                 completed += 1
